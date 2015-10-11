@@ -1,0 +1,11 @@
+*.a
+*.exe
+*.lib
+*.o
+*.obj
+*.sdf
+*.suo
+x64
+Debug
+Release
+
