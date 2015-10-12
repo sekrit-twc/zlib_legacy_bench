@@ -1,6 +1,7 @@
 #define NOMINMAX
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -75,7 +76,7 @@ PlaneBuffer allocate_plane(unsigned w, unsigned h, int type)
 	return{ handle.get(), (int)rowsize, handle };
 }
 
-void thread_target(Context *context, unsigned times, std::exception_ptr *eptr, std::mutex *mutex)
+void thread_target(Context *context, std::atomic_int *counter, std::exception_ptr *eptr, std::mutex *mutex)
 {
 	int err = 1;
 
@@ -101,7 +102,10 @@ void thread_target(Context *context, unsigned times, std::exception_ptr *eptr, s
 
 		auto tmp = allocate_plane((unsigned)context->tmp_size, 1, ZIMG_PIXEL_BYTE);
 
-		for (unsigned n = 0; n < times; ++n) {
+		while (true) {
+			if ((*counter)-- <= 0)
+				break;
+
 			if (zimg_depth_process(context->to_f32.get(), src_y.ptr, srcfp_y.ptr, tmp.ptr, src_w, src_h, src_y.stride, srcfp_y.stride,
 			                       ZIMG_PIXEL_WORD, floating_type, 8, 32, 0, 0, 0))
 				throw_zimg_error();
@@ -142,15 +146,15 @@ void thread_target(Context *context, unsigned times, std::exception_ptr *eptr, s
 				throw_zimg_error();
 
 			if (zimg_depth_process(context->to_u8.get(), dstfp_y.ptr, dst_y.ptr, tmp.ptr, dst_w, dst_h, dstfp_y.stride, dst_y.stride,
-								   floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 0))
+			                       floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 0))
 				throw_zimg_error();
 
 			if (zimg_depth_process(context->to_u8.get(), dstfp_u.ptr, dst_u.ptr, tmp.ptr, dst_w, dst_h, dstfp_u.stride, dst_u.stride,
-								   floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 1))
+			                       floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 1))
 				throw_zimg_error();
 
 			if (zimg_depth_process(context->to_u8.get(), dstfp_v.ptr, dst_v.ptr, tmp.ptr, dst_w, dst_h, dstfp_v.stride, dst_v.stride,
-								   floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 1))
+			                       floating_type, ZIMG_PIXEL_BYTE, 32, 8, 0, 1, 1))
 				throw_zimg_error();
 		}
 	} catch (...) {
@@ -200,13 +204,14 @@ void execute(unsigned times, unsigned threads)
 
 	for (unsigned n = thread_min; n <= thread_max; ++n) {
 		std::vector<std::thread> thread_pool;
+		std::atomic_int counter{ static_cast<int>(times * n) };
 		std::exception_ptr eptr{};
 		std::mutex mutex;
 		Timer timer;
 
 		timer.start();
 		for (unsigned nn = 0; nn < n; ++nn) {
-			thread_pool.emplace_back(thread_target, &context, times, &eptr, &mutex);
+			thread_pool.emplace_back(thread_target, &context, &counter, &eptr, &mutex);
 		}
 
 		for (auto &th : thread_pool) {
